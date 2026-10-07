@@ -397,7 +397,7 @@ def generate_mixing_plan(
                 continue
 
             try:
-                duration_sec = librosa.get_duration(filename=file_path)
+                duration_sec = librosa.get_duration(path=file_path)
             except Exception as e:
                 print(f"Error loading {track['file']}: {e}. Skipping.")
                 continue
