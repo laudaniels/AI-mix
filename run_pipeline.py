@@ -57,7 +57,7 @@ logging.getLogger('numba').setLevel(logging.WARNING)
 
 
 # ----------------- PIPELINE -----------------
-def run_pipeline(user_input: str):
+def run_pipeline(user_input: str, overlap_duration: float = 8.0, fade_duration: float = 1.0):
     """
     Executes the full AI DJ pipeline:
     Stage 1: Song selection → analyzed_setlist.json (user-requested songs only)
@@ -65,9 +65,11 @@ def run_pipeline(user_input: str):
     Stage 3: Transition point detection → structure_data.json
     Stage 4: Mixing plan → mixing_plan.json
     Stage 5: Final mix → mix.mp3
-    
+
     Args:
         user_input: User's complete request (song count, artists, specific songs, mood, etc.)
+        overlap_duration: Seconds of overlap planned at each transition (Stage 4)
+        fade_duration: Seconds of fade-out applied at each transition (Stage 4)
     """
 
     try:
@@ -98,7 +100,9 @@ def run_pipeline(user_input: str):
         logger.info("Stage 4: Generating mixing plan with transition points...")
         generate_mixing_plan(basic_setlist_path=os.path.join(OUTPUT_DIR, "basic_setlist.json"),
                              structure_json_path=os.path.join(OUTPUT_DIR, "structure_data.json"),
-                             output_path=os.path.join(OUTPUT_DIR, "mixing_plan.json"))
+                             output_path=os.path.join(OUTPUT_DIR, "mixing_plan.json"),
+                             overlap_duration=overlap_duration,
+                             fade_duration=fade_duration)
         if not os.path.exists(os.path.join(OUTPUT_DIR, "mixing_plan.json")):
             raise FileNotFoundError("mixing_plan.json not created.")
         logger.info("Stage 4 complete: mixing_plan.json ready.")

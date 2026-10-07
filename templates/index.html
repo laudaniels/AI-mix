@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI DJ Mixing System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <h1>🎧 AI DJ Mixing System</h1>
+    <p class="subtitle">Sleep je nummers erin, stel de mix in, en laat de AI mixen.</p>
+  </header>
+
+  <main class="layout">
+    <section class="card" id="library-card">
+      <h2>1. Bibliotheek</h2>
+      <div id="dropzone" class="dropzone">
+        <p>Sleep MP3's hierheen, of <button id="browse-btn" type="button" class="link-btn">blader</button></p>
+        <input id="file-input" type="file" accept=".mp3" multiple hidden>
+      </div>
+      <ul id="song-list" class="song-list"></ul>
+      <p id="song-empty" class="empty-hint">Nog geen nummers geüpload.</p>
+    </section>
+
+    <section class="card" id="params-card">
+      <h2>2. Mix parameters</h2>
+      <label class="field">
+        <span>Wat wil je mixen?</span>
+        <textarea id="user-input" rows="2">Mix all songs</textarea>
+      </label>
+
+      <details id="advanced">
+        <summary>Geavanceerd</summary>
+        <label class="field inline">
+          <span>Overlap (sec)</span>
+          <input id="overlap-duration" type="number" step="0.5" min="1" value="8">
+        </label>
+        <label class="field inline">
+          <span>Fade-out (sec)</span>
+          <input id="fade-duration" type="number" step="0.5" min="0" value="1">
+        </label>
+
+        <div class="api-key-row">
+          <label class="field">
+            <span>OpenAI API key <small id="api-key-status" class="hint"></small></span>
+            <input id="api-key" type="password" placeholder="sk-...">
+          </label>
+          <button id="save-key-btn" type="button" class="secondary-btn">Opslaan</button>
+        </div>
+        <p class="hint">Zonder key draait de pipeline in fallback-modus (librosa BPM-detectie, vaste transitiepunten, geen GPT-songselectie).</p>
+      </details>
+
+      <button id="process-btn" class="primary-btn">▶ Process</button>
+    </section>
+
+    <section class="card" id="log-card">
+      <h2>3. Voortgang</h2>
+      <pre id="log-output" class="log-output">Klaar om te starten…</pre>
+    </section>
+
+    <section class="card hidden" id="result-card">
+      <h2>4. Resultaat</h2>
+      <audio id="result-audio" controls></audio>
+      <img id="result-waveform" alt="Mix overview waveform" class="waveform-img hidden">
+      <div class="result-links">
+        <a id="result-plan-link" href="#" target="_blank" class="link-btn">mixing_plan.json</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

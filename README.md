@@ -226,7 +226,25 @@ AI-DJ-Mixing-System/
 
 ---
 
-## 🎮 Usage
+## 🖥️ Web GUI
+
+Instead of using the CLI, you can run a small local web control panel:
+
+```bash
+python app.py
+```
+
+Then open `http://127.0.0.1:5000` in your browser. It lets you:
+
+- Drag & drop MP3s into your library (or remove them)
+- Type your mix request and tweak overlap/fade-out duration
+- Save your OpenAI API key (stored in `.env`, takes effect immediately)
+- Hit **Process** and watch the pipeline log stream live
+- Preview the finished mix with an audio player, plus the waveform overview and `mixing_plan.json`
+
+This is a single-user tool with no authentication - only run it on localhost, don't expose it to the network.
+
+## 🎮 Usage (CLI)
 
 ### Quick Start (3 Steps)
 
