@@ -91,8 +91,9 @@ def estimate_bpm_with_librosa(audio_path):
         
         # Use beat tracking to estimate tempo
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-        
-        # tempo is returned as float, convert to int
+
+        # librosa >=0.10 returns tempo as a numpy array instead of a scalar
+        tempo = float(np.atleast_1d(tempo)[0])
         bpm = int(round(tempo))
         
         # Calculate energy level (RMS)
