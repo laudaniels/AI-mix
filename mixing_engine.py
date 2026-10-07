@@ -17,7 +17,7 @@ from pydub import AudioSegment
 from pydub.effects import normalize
 import librosa
 import scipy.signal
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, sosfilt, sosfilt_zi
 
 # Import waveform visualization module
 try:
@@ -168,40 +168,53 @@ def apply_progressive_eq(audio: AudioSegment, filter_type: str = "lowpass"):
     """
     Apply EQ filter that gradually increases in strength.
     Creates smooth transition instead of sudden frequency cut.
+
+    Filters the whole signal in one pass with the sweep applied chunk-by-chunk
+    to the *filter coefficients*, carrying the filter's internal state (zi)
+    across chunk boundaries. Re-deriving each chunk independently (zero initial
+    state every time) causes an audible click at every chunk boundary - this
+    was measured as 10-90x the typical sample-to-sample amplitude change.
     """
     duration_ms = len(audio)
     if duration_ms < 100:
         return audio
-    
+
     sr = audio.frame_rate
     nyquist = sr / 2.0
+    y = audio_segment_to_np(audio)
+
     num_chunks = 10
-    chunk_size = duration_ms // num_chunks
-    
-    result = AudioSegment.empty()
-    
+    chunk_samples = max(1, len(y) // num_chunks)
+
+    out = np.empty_like(y)
+    zi = None
+    pos = 0
     for i in range(num_chunks):
-        start = i * chunk_size
-        end = min((i + 1) * chunk_size, duration_ms)
-        chunk = audio[start:end]
-        
-        # Gradually increase filter strength
+        start = pos
+        end = len(y) if i == num_chunks - 1 else min(pos + chunk_samples, len(y))
+        if start >= end:
+            break
+
         progress = (i + 1) / num_chunks
-        
         if filter_type == "lowpass":
             # Start at 12kHz (or safe limit), end at 4kHz (or safe limit)
             max_cutoff = min(12000, nyquist * 0.95)
             min_cutoff = min(4000, nyquist * 0.5)
             cutoff = max_cutoff - ((max_cutoff - min_cutoff) * progress)
-            filtered = apply_lowpass_filter(chunk, cutoff)
+            sos = butter(4, cutoff, btype='lowpass', fs=sr, output='sos')
         else:  # highpass
             # Start at 100Hz, end at 300Hz
-            cutoff = 100 + (200 * progress)
-            filtered = apply_highpass_filter(chunk, cutoff)
-        
-        result += filtered
-    
-    return result
+            cutoff = max(20, min(100 + (200 * progress), nyquist * 0.95))
+            sos = butter(4, cutoff, btype='highpass', fs=sr, output='sos')
+
+        chunk = y[start:end]
+        if zi is None:
+            zi = sosfilt_zi(sos) * chunk[0]
+        filtered_chunk, zi = sosfilt(sos, chunk, zi=zi)
+        out[start:end] = filtered_chunk
+        pos = end
+
+    return np_to_audio_segment(out, sr=sr)
 
 
 # ================= WAVEFORM PHASE ALIGNMENT (PROFESSIONAL DJ TECHNIQUE) =================
@@ -1205,25 +1218,33 @@ def apply_echo_effect(audio: AudioSegment, echo_duration_ms: int = 3000,
 
 def apply_echo_transition(outgoing_track: AudioSegment, incoming_track: AudioSegment,
                           first_chorus_end_ms: int, echo_duration_ms: int = 3000,
+                          overlap_duration_ms: int = None,
                           bpm_from: float = 120, bpm_to: float = 120,
                           track_names: tuple = ("Outgoing", "Incoming")):
     """
-    Apply echo transition at the end of first chorus.
-    
+    Echo-out transition with a real crossfade.
+
     TRANSITION FLOW:
-    1. Outgoing track plays FULLY until first_chorus_end_ms
-    2. Echo effect plays for 3 seconds (outgoing fades out with echo)
-    3. THEN incoming track starts playing (AFTER the echo, not during)
+    1. Outgoing track plays normally until `overlap_duration_ms` before first_chorus_end_ms
+    2. For that overlap window, the outgoing track's tail (fading out, with a
+       decaying echo layered on top) plays SIMULTANEOUSLY with the incoming
+       track's intro (silence-trimmed, fading in) - a real crossfade, not a
+       sequential outgoing -> echo -> incoming splice
+    3. The echo tail keeps decaying a little further over the incoming track,
+       then the incoming track continues alone
     """
     print(f"   🎵 ECHO TRANSITION at {first_chorus_end_ms/1000:.1f}s")
     print(f"      Outgoing track length: {len(outgoing_track)/1000:.1f}s")
     print(f"      Incoming track length: {len(incoming_track)/1000:.1f}s")
-    
+
     # Ensure chorus end point is valid
     if first_chorus_end_ms <= 0 or first_chorus_end_ms > len(outgoing_track):
         print(f"   ⚠️  Invalid chorus end point, using 60s default")
         first_chorus_end_ms = min(60000, len(outgoing_track) - echo_duration_ms)
-    
+
+    overlap_duration_ms = overlap_duration_ms or echo_duration_ms
+    overlap_duration_ms = int(max(1000, min(overlap_duration_ms, first_chorus_end_ms)))
+
     # ===== STEP 1: BPM MATCHING =====
     if bpm_from > 0 and bpm_to > 0 and abs(bpm_from - bpm_to) > 0.5:
         stretch_factor = bpm_to / bpm_from
@@ -1231,50 +1252,55 @@ def apply_echo_transition(outgoing_track: AudioSegment, incoming_track: AudioSeg
         if abs(stretch_factor - 1.0) > 0.005:
             print(f"   🎛️  BPM match: {bpm_to:.0f} → {bpm_from:.0f} (stretch {stretch_factor:.4f}x)")
             incoming_track = time_stretch_audio(incoming_track, stretch_factor)
-    
-    # ===== STEP 2: OUTGOING PLAYS FULLY UNTIL CHORUS END =====
-    before_transition = outgoing_track[:first_chorus_end_ms]
-    print(f"      Before transition: {len(before_transition)/1000:.1f}s")
-    
-    # ===== STEP 3: CREATE ECHO SECTION (3 seconds) =====
-    # Take the last 1.5 seconds of the chorus as echo source
-    echo_source_len = min(1500, first_chorus_end_ms)
-    echo_source = outgoing_track[first_chorus_end_ms - echo_source_len : first_chorus_end_ms]
-    
-    # Apply echo effect - creates source + decaying echo tail
-    echo_with_tail = apply_echo_effect(echo_source, echo_duration_ms=echo_duration_ms, num_echoes=4, decay_factor=0.5)
-    
-    # Get just the echo tail (the part after the source audio ends)
-    echo_tail = echo_with_tail[echo_source_len:]
-    
-    # Apply low-pass filter for muffled/distant echo sound
-    echo_tail_filtered = apply_progressive_eq(echo_tail, filter_type="lowpass")
-    
-    # Ensure echo is exactly the right length
-    if len(echo_tail_filtered) > echo_duration_ms:
-        echo_tail_filtered = echo_tail_filtered[:echo_duration_ms]
-    elif len(echo_tail_filtered) < echo_duration_ms:
-        echo_tail_filtered = echo_tail_filtered + AudioSegment.silent(echo_duration_ms - len(echo_tail_filtered))
-    
-    # Add extra fadeout to make it smooth
-    echo_tail_filtered = echo_tail_filtered.fade_out(len(echo_tail_filtered))
-    
-    print(f"      Echo section: {len(echo_tail_filtered)/1000:.1f}s")
-    
-    # ===== STEP 4: INCOMING TRACK STARTS AFTER ECHO =====
-    # Small fade in on incoming for smoothness
-    incoming_with_fade = incoming_track.fade_in(min(500, len(incoming_track)))
-    
-    print(f"      Incoming track: {len(incoming_with_fade)/1000:.1f}s")
-    
-    # ===== STEP 5: FINAL ASSEMBLY =====
-    # Outgoing → Echo (3s) → Incoming (sequential, no overlap)
-    result = before_transition + echo_tail_filtered + incoming_with_fade
-    
+
+    # ===== STEP 2: TRIM SILENCE OFF THE INCOMING INTRO =====
+    # Only analyze the first few seconds - we just need the trim point, not a
+    # full-track beat grid.
+    intro_window_ms = min(20000, len(incoming_track))
+    try:
+        _, trim_point_ms, _ = detect_first_downbeat_and_trim(incoming_track[:intro_window_ms], expected_bpm=bpm_to)
+    except Exception as e:
+        print(f"   ⚠️  Intro trim detection failed ({e}), using untrimmed incoming track")
+        trim_point_ms = 0
+    incoming_trimmed = incoming_track[int(trim_point_ms):] if trim_point_ms > 0 else incoming_track
+    if trim_point_ms > 0:
+        print(f"      Incoming intro trimmed by {trim_point_ms:.0f}ms")
+
+    # ===== STEP 3: OUTGOING PLAYS NORMALLY UNTIL THE OVERLAP WINDOW STARTS =====
+    overlap_start_ms = max(0, first_chorus_end_ms - overlap_duration_ms)
+    before_overlap = outgoing_track[:overlap_start_ms]
+    print(f"      Before overlap: {len(before_overlap)/1000:.1f}s")
+
+    # ===== STEP 4: OUTGOING SIDE - FADE OUT + DECAYING ECHO TAIL =====
+    outgoing_overlap_source = outgoing_track[overlap_start_ms:first_chorus_end_ms]
+    echo_layer = apply_echo_effect(outgoing_overlap_source, echo_duration_ms=echo_duration_ms,
+                                    num_echoes=4, decay_factor=0.5)
+    echo_layer = apply_progressive_eq(echo_layer, filter_type="lowpass")  # muffle as it decays
+    print(f"      Overlap + echo tail: {len(echo_layer)/1000:.1f}s")
+
+    # ===== STEP 5: INCOMING SIDE - FADE IN + HIGH-PASS DURING THE OVERLAP =====
+    overlap_len = min(overlap_duration_ms, len(incoming_trimmed))
+    incoming_intro = incoming_trimmed[:overlap_len].fade_in(overlap_len)
+    incoming_intro = apply_progressive_eq(incoming_intro, filter_type="highpass")  # protect outgoing's bass
+    incoming_rest = incoming_trimmed[overlap_len:]
+    # Short crossfade at the splice - the filtered intro and the raw remainder
+    # otherwise meet as a hard, audibly clicking edge.
+    splice_crossfade_ms = min(300, len(incoming_intro), len(incoming_rest))
+    if splice_crossfade_ms > 0:
+        incoming_processed = incoming_intro.append(incoming_rest, crossfade=splice_crossfade_ms)
+    else:
+        incoming_processed = incoming_intro + incoming_rest
+
+    # ===== STEP 6: OVERLAY THE DECAYING ECHO ONTO THE START OF THE INCOMING TRACK =====
+    overlapped = incoming_processed.overlay(echo_layer, position=0)
+
+    # ===== STEP 7: FINAL ASSEMBLY =====
+    result = before_overlap + overlapped
+
     print(f"   ✅ Echo transition done:")
     print(f"      Total: {len(result)/1000:.1f}s")
-    print(f"      Outgoing → {first_chorus_end_ms/1000:.1f}s | Echo {echo_duration_ms/1000:.1f}s | THEN Incoming starts")
-    
+    print(f"      Outgoing → {overlap_start_ms/1000:.1f}s | {overlap_duration_ms/1000:.1f}s real overlap+echo | incoming continues alone")
+
     return normalize(result)
 
 
@@ -1447,17 +1473,20 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
         # === ECHO TRANSITION (Boss's requirement) ===
         if transition_type == "echo-transition":
             # Get first chorus end from mixing plan
-            first_chorus_end_sec = safe_float(entry.get("first_chorus_end_sec"), 
+            first_chorus_end_sec = safe_float(entry.get("first_chorus_end_sec"),
                                               entry.get("transition_point", 60.0))
             echo_duration_sec = safe_float(entry.get("echo_duration_sec"), 3.0)
-            
+            overlap_duration_sec = safe_float(entry.get("overlap_duration"), echo_duration_sec)
+
             first_chorus_end_ms = ms(first_chorus_end_sec)
             echo_duration_ms = ms(echo_duration_sec)
-            
+            overlap_duration_ms = ms(overlap_duration_sec)
+
             print(f"   First chorus end: {first_chorus_end_sec:.1f}s")
             print(f"   Echo duration: {echo_duration_sec:.1f}s")
+            print(f"   Overlap duration: {overlap_duration_sec:.1f}s")
             print(f"   BPM: {bpm_from:.0f} → {bpm_to:.0f}")
-            
+
             # Apply echo transition using previous_track_audio
             if previous_track_audio:
                 # Use apply_echo_transition function with track names for logging
@@ -1467,6 +1496,7 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
                     incoming_track=to_audio,
                     first_chorus_end_ms=first_chorus_end_ms,
                     echo_duration_ms=echo_duration_ms,
+                    overlap_duration_ms=overlap_duration_ms,
                     bpm_from=bpm_from,
                     bpm_to=bpm_to,
                     track_names=track_names
@@ -1486,8 +1516,9 @@ def generate_mix(mixing_plan_json: str = "output/mixing_plan.json",
                 # Add the transition result (which includes outgoing->echo->incoming)
                 mix = mix_before_previous + transition_result
                 
-                # Track where incoming starts for next iteration
-                incoming_start_in_mix = previous_track_start + first_chorus_end_ms
+                # Track where incoming starts for next iteration (overlap now starts
+                # `overlap_duration_ms` before the chorus-end cut point, not at it)
+                incoming_start_in_mix = previous_track_start + max(0, first_chorus_end_ms - overlap_duration_ms)
                 
                 # Add to mix overview
                 mix_overview_data.append({
