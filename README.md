@@ -2,22 +2,21 @@
 
 ## Overview
 
-The **AI DJ Mixing System** is a professional, AI-powered DJ mixing pipeline that creates seamless, radio-quality mixes from your local music library. Using advanced audio analysis, machine learning, and OpenAI's GPT models, it automatically selects tracks, analyzes their musical characteristics, detects optimal transition points, and creates professional DJ transitions with perfect beat-grid alignment, gradual tempo sync, and intelligent energy flow management.
+The **AI DJ Mixing System** is a DJ mixing pipeline that creates mixes from your local music library. Using audio analysis (librosa) and OpenAI's GPT/Whisper models, it selects tracks, analyzes their musical characteristics, detects a transition point per song, and builds an echo-out transition with a real overlap/crossfade between tracks.
+
+> **Implementation status note (2026-10-07):** this README describes both what's live today and some aspirational "DJ technique" features. Several of the bullets below (beat-grid alignment, 32-step tempo ramping, key/genre-based mixing decisions, multi-candidate transition scoring) are implemented as standalone functions but are **not currently called** from the actual mixing path - verified by checking call sites, not just reading docstrings. Each relevant bullet/row below is marked with its real status so this doesn't bite you mid-mix.
 
 ### What Makes This Special?
 
 This isn't just audio stitching—it's **real professional DJ technique** automated with cutting-edge AI:
 
-- 🎯 **Intelligent Transition Detection** - AI finds 3 optimal transition points per song (verse_end, chorus_end, breakdown_start, pre_drop)
-- 🎛️ **Perfect Beat-Grid Alignment** - Sample-accurate beat synchronization with downbeat matching
-- 🌊 **Gradual Tempo Sync** - Professional CDJ-style tempo ramping (32 micro-steps) instead of instant stretching
-- 📊 **Energy Curve Analysis** - Detects buildups, drops, and energy transitions for context-aware mixing
-- 🎵 **Harmonic Mixing** - Uses the Camelot Wheel to ensure key compatibility
-- 🔬 **Multi-Factor Scoring** - Evaluates 6 factors (genre, vocals, energy, keys, BPM, type) to select best transitions
-- 🎚️ **Progressive EQ Filtering** - Prevents frequency mud during overlaps
-- 🎼 **Phrase-Based Transitions** - Snaps to 8-bar musical boundaries for natural timing
-- 🎧 **Genre-Adaptive Mixing** - Different strategies for Afrobeats, R&B, EDM, Hip-Hop, Dancehall
-- ⚡ **Dynamic Overlap Duration** - 4-16 second transitions based on musical context
+- 🎯 **Transition Detection** - GPT-4o + Whisper find the first chorus end per song (⚠️ one transition point per song, not 3 candidates - with an API key)
+- 🔊 **Real Overlap/Crossfade** - outgoing fades out (with a decaying echo layered on top) while incoming fades in simultaneously, instead of a hard splice
+- 📊 **Energy Curve Analysis** - Detects buildups, drops, and energy transitions (computed, feeds into scoring - see note below)
+- 🎚️ **Progressive EQ Filtering** - Low-pass on the outgoing tail, high-pass on the incoming intro, click-free (continuous filter state across the sweep)
+- ✂️ **Intro Silence Trim** - Trims leading silence off the incoming track before the overlap starts
+- ⚡ **Configurable Overlap/Fade** - Overlap and fade duration are set once per run (CLI arg or GUI field), applied to every transition
+- ⚠️ *Not currently wired into the actual mix:* perfect beat-grid alignment/downbeat sync, 32-step gradual tempo ramping, Camelot Wheel key compatibility, genre-adaptive EQ/overlap rules, and the 6-factor transition scoring (all defined as functions, but never called from the mixing path - confirmed via grep, not guesswork)
 
 ### From Natural Language to Professional Mix
 
@@ -31,12 +30,11 @@ The system will:
 
 1. **Select** matching songs from your `./songs/` folder using OpenAI GPT-4o
 2. **Analyze** each track with librosa (BPM, energy, key, phrase boundaries)
-3. **Detect** 3 transition candidates per song using GPT-4o + energy curve analysis
-4. **Score** each transition point using intelligent multi-factor algorithm
-5. **Align** beats perfectly with beat-grid warping and downbeat synchronization
-6. **Sync** tempos gradually (32 micro-steps) for inaudible transitions
-7. **Mix** with professional EQ filtering and harmonic compatibility
-8. **Export** a polished `output/mix.mp3` ready to play
+3. **Detect** the first-chorus-end transition point per song using GPT-4o + Whisper + energy curve analysis
+4. **Trim** intro silence off each incoming track
+5. **Overlap** outgoing (echo tail, low-pass) with incoming (fade-in, high-pass) for a real crossfade
+6. **Stretch** the incoming track's tempo by up to ±5% to match BPM
+7. **Export** a polished `output/mix.mp3` ready to play
 
 ---
 
@@ -44,53 +42,46 @@ The system will:
 
 | Feature                                 | Description                                                              | Status               |
 | --------------------------------------- | ------------------------------------------------------------------------ | -------------------- |
-| **🎤 Natural Language Input**           | Describe your mix requirements in plain English                          | ✅ Fully Implemented |
-| **🎵 Smart Track Selection**            | OpenAI GPT-4o analyzes your library and picks matching songs             | ✅ Fully Implemented |
-| **🔊 Echo Transition**                  | 3-second echo fadeout at first chorus end + incoming track starts        | ✅ NEW               |
-| **🎯 Intelligent Transition Detection** | AI finds 3 optimal exit points per song (breakdown, verse end, pre-drop) | ✅ Fully Implemented |
-| **📊 Energy Curve Analysis**            | Detects buildups, drops, and energy transitions for smart mixing         | ✅ Fully Implemented |
-| **🔬 Multi-Factor Transition Scoring**  | 6-factor algorithm (genre, vocals, energy, keys, BPM, type)              | ✅ Fully Implemented |
-| **🎛️ Perfect Beat-Grid Alignment**      | Sample-accurate beat sync with downbeat matching & micro-corrections     | ✅ Fully Implemented |
-| **🌊 Gradual Tempo Sync**               | CDJ-style tempo ramping (32 micro-steps) instead of instant stretch      | ✅ Fully Implemented |
-| **🎼 Harmonic Mixing (Camelot Wheel)**  | Ensures key compatibility between transitions                            | ✅ Fully Implemented |
-| **🎚️ Professional EQ Filtering**        | Progressive Butterworth filters (low-pass/high-pass)                     | ✅ Fully Implemented |
-| **📐 Phrase-Based Transitions**         | Snaps to 8-bar musical boundaries                                        | ✅ Fully Implemented |
-| **🎧 Genre-Specific Rules**             | Afrobeats, R&B, EDM, Hip-Hop, Dancehall adaptive mixing                  | ✅ Enhanced          |
-| **⚡ Dynamic Overlap Duration**         | 4-16 second transitions based on context                                 | ✅ Fully Implemented |
-| **💾 Intelligent Caching**              | Stores analysis results in `notes/` for instant re-runs                  | ✅ Fully Implemented |
-| **🎬 OpenAI Whisper Integration**       | Fast vocal/structure detection via API                                   | ✅ Fully Implemented |
-| **📈 Automatic BPM Correction**         | Fixes 2x/0.5x detection errors in slow R&B/Afrobeats                     | ✅ Fully Implemented |
+| **🎤 Natural Language Input**           | Describe your mix requirements in plain English                          | ⚠️ Only with an API key - otherwise the first 10 songs in the folder are used as-is |
+| **🎵 Smart Track Selection**            | OpenAI GPT-4o analyzes your library and picks matching songs             | ⚠️ Needs API key (no key = first 10 songs found) |
+| **🔊 Echo Transition with real overlap**| Outgoing fades out (echo layered on top) while incoming fades in, simultaneously | ✅ Implemented |
+| **🎯 Transition Detection**             | GPT-4o + Whisper find the first-chorus-end per song                      | ⚠️ Needs API key (no key = fixed 70s for every song); one point per song, not 3 candidates |
+| **✂️ Intro Silence Trim**               | Trims leading silence off the incoming track before the overlap          | ✅ Implemented |
+| **📊 Energy Curve Analysis**            | Detects buildups/drops; only affects anything when multiple candidates exist | ⚠️ Computed, but has no effect in practice (see Transition Detection above) |
+| **🔬 Multi-Factor Transition Scoring**  | 6-factor algorithm (genre, vocals, energy, keys, BPM, type)              | ⚠️ Code runs, but only ever scores a single candidate - never changes the outcome |
+| **🎛️ Perfect Beat-Grid Alignment**      | Sample-accurate beat sync with downbeat matching & micro-corrections     | ❌ Defined, never called from the mixing path |
+| **🌊 Gradual Tempo Sync**               | CDJ-style tempo ramping (32 micro-steps) instead of instant stretch      | ❌ Defined, never called - actual stretch is a single ±5%-clamped ratio |
+| **🎼 Harmonic Mixing (Camelot Wheel)**  | Ensures key compatibility between transitions                            | ❌ Key is never used to change the audio (no pitch-shifting exists in this codebase) |
+| **🎚️ Professional EQ Filtering**        | Progressive Butterworth filters (low-pass/high-pass)                     | ✅ Implemented (now click-free - continuous filter state across the sweep) |
+| **🎧 Genre-Specific Rules**             | Afrobeats, R&B, EDM, Hip-Hop, Dancehall adaptive mixing                  | ❌ Defined, never called from the mixing path |
+| **⚡ Overlap Duration**                 | Configurable overlap length per run (CLI arg or GUI field)               | ✅ Implemented, but it's one fixed value per run - not dynamically computed per transition |
+| **💾 Intelligent Caching**              | Stores analysis results in `notes/` for instant re-runs                  | ✅ Implemented |
+| **🎬 OpenAI Whisper Integration**       | Vocal/structure detection via API                                        | ⚠️ Needs API key (no key = `has_vocals: false` for every track) |
+| **📈 Automatic BPM Correction**         | Fixes 2x/0.5x detection errors in slow R&B/Afrobeats                     | ❌ The GPT-based BPM lookup is commented out in `bpm_lookup.py` - BPM is always plain librosa beat tracking, API key or not, with no octave-error correction |
 
-### Echo Transition (New Default)
+### Echo Transition (Default, with a real overlap)
 
-The system now uses **echo-transition** as the default mixing style:
+The system uses **echo-transition** as the only mixing style `generate_mixing_plan.py` produces:
 
-1. **First song plays** until the end of its first chorus
-2. **At first chorus end**, a 3-second echo effect is applied (decaying repeats)
-3. **Second song starts** playing simultaneously over the echoing first song
-4. **Echo fades out** while second song continues cleanly
+1. **First song plays** normally until `overlap_duration` seconds before the detected (or fallback) transition point
+2. **For that overlap window**, the first song's tail fades out with a decaying echo layered on top (low-pass filtered, muffling as it decays) **while the second song's intro - silence-trimmed - fades in simultaneously underneath it** (high-pass filtered, to keep its treble clear of the first song's bass)
+3. **The echo keeps decaying** a little further over the second song
+4. **Second song continues alone** once the echo has fully decayed
 5. **Repeat** for each song transition
 
-This creates a professional radio-style transition that:
-
-- Gives listeners a satisfying ending to each song's chorus
-- Creates an exciting echo effect during transitions
-- Allows the new song to start fresh without muddy overlaps
+Overlap length and fade-out length are both set once per run - via `python app.py`'s GUI fields, or `run_pipeline(user_input, overlap_duration=..., fade_duration=...)` - and applied the same way to every transition in that run (not computed per-transition from genre/key/BPM; see the Key Features table above).
 
 ### Professional DJ Improvements
 
-Our system implements **10 advanced DJ techniques**:
+What's actually wired into the mixing path today:
 
-1. **Intelligent Transition Detection** - AI-selected optimal exit points (not fixed timestamps)
-2. **Energy Curve Analysis** - Detects buildups/drops for perfect timing
-3. **Multi-Factor Scoring** - Context-aware transition selection
-4. **Perfect Beat Alignment** - Sample-accurate synchronization with beat-grid warping
-5. **Gradual Tempo Sync** - Professional CDJ-style ramping (32 micro-steps)
-6. **EQ Filtering** - Prevents muddy sound during transitions
-7. **Harmonic Mixing** - Uses music theory for perfect key compatibility
-8. **Dynamic Overlap** - Adjusts transition length intelligently
-9. **Phrase Boundaries** - Transitions at natural musical breaks
-10. **Genre Rules** - Different strategies per music style
+1. **Transition Detection** - GPT-4o + Whisper find the first-chorus-end per song (one point per song; needs an API key, otherwise a fixed 70s is used for every track)
+2. **Real Overlap/Crossfade** - outgoing and incoming genuinely play simultaneously during the overlap window, not a sequential splice
+3. **Intro Silence Trim** - leading silence on the incoming track is detected and cut before the overlap starts
+4. **Click-Free Progressive EQ** - low-pass on the outgoing tail, high-pass on the incoming intro, with continuous filter state across the sweep (no chunk-boundary clicks)
+5. **BPM Matching** - incoming track is time-stretched by up to ±5% to match the outgoing BPM
+
+Defined in the code but **not** called from this path (see the implementation-status note near the top of this README): beat-grid/downbeat alignment, 32-step gradual tempo ramping, Camelot Wheel key compatibility, genre-specific EQ/overlap rules, and the 6-factor transition scoring (it runs, but only ever sees one candidate).
 
 ---
 
@@ -98,7 +89,7 @@ Our system implements **10 advanced DJ techniques**:
 
 | Requirement             | Version | Installation                                                      |
 | ----------------------- | ------- | ----------------------------------------------------------------- |
-| **Python**              | 3.8+    | [Download Python](https://www.python.org/downloads/)              |
+| **Python**              | 3.9+    | [Download Python](https://www.python.org/downloads/) (Flask 3.1, used by the web GUI, requires 3.9+) |
 | **FFmpeg**              | Latest  | [Download FFmpeg](https://ffmpeg.org/download.html) - Add to PATH |
 | **OpenAI API Key**      | -       | Get from [platform.openai.com](https://platform.openai.com)       |
 | **Local Music Library** | -       | Place MP3 files in `./songs/` folder                              |
@@ -107,7 +98,8 @@ Our system implements **10 advanced DJ techniques**:
 
 - **RAM**: 4GB minimum (8GB recommended for large libraries)
 - **Storage**: ~500MB for dependencies + your music library
-- **CPU**: Modern multi-core processor recommended for faster analysis
+- **CPU**: Modern multi-core processor recommended for faster analysis (librosa/numba are CPU-bound)
+- **GPU**: Not used. Song selection and transcription run via the OpenAI API (GPT-4o, Whisper), not a local model - a discrete GPU currently gives no speedup for this pipeline
 
 ---
 
@@ -116,8 +108,8 @@ Our system implements **10 advanced DJ techniques**:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/kckDeepak/AI-DJ-Mixing-System.git
-cd AI-DJ-Mixing-System
+git clone https://github.com/laudaniels/AI-mix.git
+cd AI-mix
 ```
 
 ### 2. Create Virtual Environment (Recommended)
@@ -211,14 +203,17 @@ AI-DJ-Mixing-System/
 │   ├── track_analysis_engine.py        # Pre-librosa analysis
 │   └── ...
 │
-├── run_pipeline.py                 # ▶️ MAIN ENTRY POINT
+├── run_pipeline.py                 # ▶️ MAIN ENTRY POINT (CLI)
 ├── track_analysis_openai_approach.py  # Stage 1: Song selection
 ├── bpm_lookup.py                   # Stage 2: BPM/metadata enrichment
 ├── structure_detector.py           # Stage 3: Structure analysis
 ├── generate_mixing_plan.py         # Stage 4: Transition planning
 ├── mixing_engine.py                # Stage 5: Final mix generation
 │
-├── test_improvements.py            # ✅ Test suite for 7 features
+├── app.py                          # ▶️ Web GUI entry point (Flask)
+├── templates/index.html            # Web GUI page
+├── static/app.js, style.css        # Web GUI frontend
+│
 ├── requirements.txt                # 📦 Python dependencies
 ├── .env                            # 🔑 API keys (create this!)
 └── README.md                       # 📖 This file
@@ -935,7 +930,7 @@ This tool is for **personal, educational, and non-commercial use only** with **l
 
 ## 📞 Support & Contact
 
-**Found a bug?** Open an issue on [GitHub Issues](https://github.com/kckDeepak/AI-DJ-Mixing-System/issues)
+**Found a bug?** Open an issue on [GitHub Issues](https://github.com/laudaniels/AI-mix/issues)
 
 **Have a question?** Check existing issues or start a discussion
 
@@ -949,6 +944,8 @@ _Let the AI handle the math. You handle the vibe._ 🎧
 ---
 
 ## 📝 Changelog
+
+> Historical record of what each version *set out* to do. See the **Key Features** table and the implementation-status note near the top for what's actually wired into the mixing path today - several items below (beat-grid alignment, 32-step tempo sync, genre rules, BPM correction) were never connected to the live code path.
 
 ### Version 3.0 (Latest) - December 2025
 
